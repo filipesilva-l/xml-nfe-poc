@@ -1,84 +1,118 @@
 #![allow(dead_code)]
 
 use quick_xml::{
-    events::{BytesText, Event, BytesStart},
+    events::{BytesText, Event},
     Reader, Writer,
 };
 use std::{
     collections::HashMap,
     error::Error,
-    fs,
+    fs::{self, File},
     io::{self, Cursor},
+    os::unix::prelude::MetadataExt,
     path::PathBuf,
 };
 
-fn main() -> Result<(), Box<dyn Error>> {
-    //let files = get_files_paths()?;
-    //println!("TOTAL FILES: {}", files.len());
+const TAB_CODE: u8 = 9;
+const INDENT_SIZE: usize = 1;
 
-    let changes = HashMap::from([("1", "1022"), ("2", "1022")]);
+fn main() -> Result<(), Box<dyn Error>> {
+    let changes = HashMap::from([("1", "1022")]);
 
     let mut reader = Reader::from_file("example.xml")?;
-    let mut buf = Vec::new();
+
+    let file = File::open("example.xml")?;
+    let file_size: usize = file.metadata()?.size() as usize;
+    drop(file);
+
+    let mut buf = Vec::with_capacity(file_size);
 
     let mut writer = Writer::new(Cursor::new(Vec::new()));
 
     let mut new_cest: Option<&&str> = None;
-    let mut should_skip_cest = false;
+    let mut should_change_text = false;
 
     loop {
-        buf.clear();
-
         match reader.read_event_into(&mut buf) {
-            Ok(e) => match &e {
-                Event::Start(tag) if tag.name().as_ref() == b"prod" => {
-                    writer.write_event(&e)?;
+            Ok(e) => {
+                println!("{:?}", &e);
 
-                    for att in tag
-                        .attributes()
-                        .with_checks(false)
-                        .filter_map(|att| att.ok())
-                    {
-                        if att.key.as_ref() != b"nItem" {
-                            continue;
+                let mut write_cest_text = || -> Result<(), Box<dyn Error>> {
+                        let content = *new_cest.unwrap();
+                        let content = BytesText::from_escaped(content);
+
+                        let event = Event::Text(content);
+
+                        writer.write_event(event)?;
+
+                        Ok(())
+                };
+
+                match &e {
+                    // change prod
+                    Event::Start(tag) if tag.name().as_ref() == b"prod" => {
+                        writer.write_event(&e)?;
+
+                        for att in tag
+                            .attributes()
+                            .with_checks(false)
+                            .filter_map(|att| att.ok())
+                        {
+                            if att.key.as_ref() != b"cod" {
+                                continue;
+                            }
+
+                            new_cest = changes.get(std::str::from_utf8(att.value.as_ref())?);
                         }
-
-                        let cest = changes.get(std::str::from_utf8(att.value.as_ref())?);
-
-                        new_cest = cest;
                     }
-                }
-                Event::Start(tag) if tag.name().as_ref() == b"CEST" => {
-                    writer.write_event(&e)?;
 
-                    if new_cest.is_some() {
-                        should_skip_cest = true;
+                    // ignore CEST already existent
+                    Event::Start(tag) if tag.name().as_ref() == b"cest" => {
+                        should_change_text = new_cest.is_some();
 
-                        let cest_content = new_cest.unwrap();
-
-                        let cest_content_event =
-                            Event::Text(BytesText::from_escaped(*cest_content));
-
-                        writer.write_event(cest_content_event)?;
-                    }
-                }
-                Event::Text(_) => {
-                    if should_skip_cest {
-                        should_skip_cest = false;
-                    } else {
                         writer.write_event(&e)?;
                     }
-                }
-                Event::Eof => {
-                    writer.write_event(&e)?;
 
-                    break;
+                    // change existing cest
+                    Event::Text(_) if should_change_text => {
+                        write_cest_text()?;
+
+                        new_cest = None;
+                        should_change_text = false;
+                    },
+
+                    // if we reached the end of the cest tag and should_change_text is still true,
+                    // this means that the cast tag had no text inside, so we first write the new cest
+                    // and then we end the tag
+                    Event::End(tag) if tag.name().as_ref() == b"cest" && should_change_text => {
+                        write_cest_text()?;
+
+                        new_cest = None;
+                        should_change_text = false;
+
+                        writer.write_event(&e)?;
+                    }
+
+                    // ignore empty CEST tag
+                    Event::Empty(tag) if tag.name().as_ref() == b"cest" => (),
+
+                    // break from loop
+                    Event::Eof => {
+                        writer.write_event(&e)?;
+                        break;
+                    }
+
+                    // write every other non-matched event to the new file
+                    _ => writer.write_event(&e)?,
                 }
-                _ => writer.write_event(&e)?,
-            },
+            }
             _ => (),
         }
     }
+
+    fs::write("result.xml", writer.into_inner().into_inner())?;
+
+    println!("{}", fs::read_to_string("result.xml")?);
 
     Ok(())
 }
@@ -96,3 +130,4 @@ fn get_files_paths() -> io::Result<Vec<PathBuf>> {
 
     Ok(files)
 }
+

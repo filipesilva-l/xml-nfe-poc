@@ -5,10 +5,11 @@
 	<det>
 		<prod cod="1">
 			<descricao>bala</descricao>
-			<cest>1022</cest></prod>
+			<cest>1022</cest>
+		</prod>
 		<prod cod="2">
 			<descricao>chiclete</descricao>
-			<cest>1022</cest>
+			<cest>10012</cest>
 		</prod>
 	</det>
 </nfe>
