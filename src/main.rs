@@ -8,7 +8,7 @@ use std::{
     collections::HashMap,
     error::Error,
     fs::{self, File},
-    io::{self, Cursor},
+    io,
     os::unix::prelude::MetadataExt,
     path::PathBuf,
 };
@@ -27,7 +27,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut buf = Vec::with_capacity(file_size);
 
-    let mut writer = Writer::new(Cursor::new(Vec::new()));
+    let result_file = File::create("result.xml")?;
+    let mut writer = Writer::new(result_file);
 
     let mut new_cest: Option<&&str> = None;
     let mut should_change_text = false;
@@ -35,8 +36,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(e) => {
-                println!("{:?}", &e);
-
                 let mut write_cest_text = || -> Result<(), Box<dyn Error>> {
                         let content = *new_cest.unwrap();
                         let content = BytesText::from_escaped(content);
@@ -109,8 +108,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             _ => (),
         }
     }
-
-    fs::write("result.xml", writer.into_inner().into_inner())?;
 
     println!("{}", fs::read_to_string("result.xml")?);
 
